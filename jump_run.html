@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Waschbär vs Zombie (Sieg Fix v6)</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #1e1e1e;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: white;
+            font-family: monospace;
+            overflow: hidden;
+            touch-action: none;
+            user-select: none;
+        }
+
+        #game-wrapper {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        canvas {
+            display: block;
+            background-color: #000;
+            max-width: 100%;
+            max-height: 100%;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            background: rgba(0,0,0,0.85);
+            z-index: 20;
+            transition: opacity 0.3s;
+        }
+
+        #settings-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            font-size: 30px;
+            cursor: pointer;
+            z-index: 30;
+            background: rgba(0,0,0,0.5);
+            width: 50px; height: 50px;
+            border-radius: 5px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            border: 2px solid #555;
+        }
+
+        #settings-modal {
+            background: #333;
+            padding: 20px;
+            border-radius: 10px;
+            border: 2px solid #fff;
+            width: 90%;
+            max-width: 450px;
+            max-height: 85vh;
+            overflow-y: auto;
+            text-align: center;
+            display: none;
+            z-index: 40;
+            position: absolute;
+        }
+
+        #settings-modal.active { display: block; }
+
+        .setting-section {
+            border-top: 1px solid #555;
+            margin-top: 15px;
+            padding-top: 10px;
+        }
+        
+        .setting-section h3 {
+            margin: 0 0 10px 0;
+            color: #4CAF50;
+            text-align: left;
+            font-size: 1.1em;
+        }
+
+        .setting-group { margin-bottom: 15px; text-align: left; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 0.9em; }
+        input[type=range] { width: 100%; cursor: pointer; }
+        input[type=url] { width: 100%; padding: 8px; margin-top: 2px; background: #222; border: 1px solid #555; color: white; border-radius: 5px; box-sizing: border-box; font-size: 0.8em; }
+        .val-display { float: right; color: #aaa; font-size: 0.9em; }
+
+        button.menu-btn {
+            padding: 10px 20px; font-size: 16px; cursor: pointer;
+            background: #d32f2f; color: white; border: none; border-radius: 5px;
+            margin-top: 10px; width: 100%;
+        }
+        button.toggle-btn { background: #1976D2; }
+        button.load-btn { background: #388E3C; margin-top: 5px; }
+
+        #controls {
+            position: absolute; bottom: 20px; left: 0; width: 100%; height: 0;
+            display: flex; justify-content: space-between; pointer-events: none;
+            z-index: 10; padding: 0 20px; box-sizing: border-box;
+        }
+
+        .control-group { display: flex; gap: 15px; pointer-events: auto; align-items: flex-end; }
+
+        .btn {
+            width: 70px; height: 70px;
+            background: rgba(255, 255, 255, 0.15);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            display: flex; justify-content: center; align-items: center;
+            font-size: 30px; color: white; backdrop-filter: blur(4px);
+        }
+        .btn:active, .btn.pressed { background: rgba(255, 255, 255, 0.4); transform: scale(0.95); }
+        .btn-action { background: rgba(255, 50, 50, 0.2); border-color: rgba(255, 100, 100, 0.4); }
+        .btn-jump { background: rgba(50, 50, 255, 0.2); border-color: rgba(100, 100, 255, 0.4); }
+
+        .hidden { display: none !important; opacity: 0; pointer-events: none; }
+
+        .sprite-status { margin-top: 5px; padding: 5px; border-radius: 3px; font-size: 11px; display: none; }
+        .sprite-status.show { display: block; }
+        .sprite-status.success { background: rgba(76,175,80,0.3); color: #4CAF50; }
+        .sprite-status.loading { background: rgba(255,152,0,0.3); color: #FF9800; }
+        
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #222; }
+        ::-webkit-scrollbar-thumb { background: #555; border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+<div id="game-wrapper">
+    <canvas id="canvas" width="1200" height="595"></canvas>
+    
+    <div id="settings-btn">⚙️</div>
+
+    <div id="ui-layer">
+        <h1 id="status-msg">Lade Assets...</h1>
+        <div id="progress">0%</div>
+        <button id="start-btn" class="menu-btn hidden" style="width: auto; padding: 15px 40px;">SPIEL STARTEN</button>
+    </div>
+
+    <div id="settings-modal">
+        <h2>⚙️ Einstellungen</h2>
+        
+        <div class="setting-group">
+            <label>🏃 Spieler Speed <span id="val-player" class="val-display">4</span></label>
+            <input type="range" id="input-player" min="2" max="10" value="4" step="0.5">
+        </div>
+        <div class="setting-group">
+            <label>🧟 Gegner Speed <span id="val-enemy" class="val-display">5</span></label>
+            <input type="range" id="input-enemy" min="1" max="10" value="5" step="0.5">
+        </div>
+        <div class="setting-group">
+            <label>🔫 Kugel Speed <span id="val-bullet" class="val-display">7</span></label>
+            <input type="range" id="input-bullet" min="3" max="15" value="7" step="1">
+        </div>
+        <div class="setting-group">
+            <label>⬆️ Sprunghöhe <span id="val-jump" class="val-display">15</span></label>
+            <input type="range" id="input-jump" min="10" max="25" value="15" step="1">
+        </div>
+        <div class="setting-group">
+            <label>🌍 Schwerkraft <span id="val-grav" class="val-display">0.17</span></label>
+            <input type="range" id="input-grav" min="0.10" max="0.30" value="0.17" step="0.01">
+        </div>
+        
+        <!-- SECTION: SPIELER -->
+        <div class="setting-section">
+            <h3>🎨 Spieler (Held)</h3>
+            <div class="setting-group">
+                <label>Nach Rechts (URL)</label>
+                <input type="url" id="url-player-right" placeholder="https://...">
+            </div>
+            <div class="setting-group">
+                <label>Nach Links (URL)</label>
+                <input type="url" id="url-player-left" placeholder="https://...">
+            </div>
+        </div>
+
+        <!-- SECTION: GEGNER -->
+        <div class="setting-section">
+            <h3>🧟 Gegner (Zombie)</h3>
+            <div class="setting-group">
+                <label>Nach Rechts (URL)</label>
+                <input type="url" id="url-enemy-right" placeholder="https://...">
+            </div>
+            <div class="setting-group">
+                <label>Nach Links (URL)</label>
+                <input type="url" id="url-enemy-left" placeholder="https://...">
+            </div>
+        </div>
+
+        <!-- SECTION: WELT -->
+        <div class="setting-section">
+            <h3>🌍 Welt & UI</h3>
+            <div class="setting-group">
+                <label>Hintergrundbild (URL)</label>
+                <input type="url" id="url-bg" placeholder="https://...">
+            </div>
+            <div class="setting-group">
+                <label>Gewonnen Bild (URL)</label>
+                <input type="url" id="url-win" placeholder="https://...">
+            </div>
+            <div class="setting-group">
+                <label>Verloren Bild (URL)</label>
+                <input type="url" id="url-lose" placeholder="https://...">
+            </div>
+        </div>
+
+        <div id="sprite-status" class="sprite-status"></div>
+        <button id="btn-load-custom" class="menu-btn load-btn">📥 Alle Bilder laden & speichern</button>
+
+        <div class="setting-section">
+            <button id="btn-fullscreen" class="menu-btn toggle-btn">📱 Vollbild</button>
+            <button id="btn-reset-all" class="menu-btn" style="background: #555;">🔄 ALLES Zurücksetzen</button>
+            <button id="btn-close-settings" class="menu-btn">✅ Zurück zum Spiel</button>
+        </div>
+    </div>
+</div>
+
+<div id="controls">
+    <div class="control-group">
+        <div class="btn" id="btn-left">⬅️</div>
+        <div class="btn" id="btn-right">➡️</div>
+    </div>
+    <div class="control-group">
+        <div class="btn btn-action" id="btn-shoot">🔫</div>
+        <div class="btn btn-jump" id="btn-jump">⬆️</div>
+    </div>
+</div>
+
+<script>
+// --- KONFIGURATION (Version 6 für Sieg-Fix) ---
+const DEFAULT_CONFIG = {
+    playerSpeed: 4, 
+    enemySpeed: 5, 
+    bulletSpeed: 7,
+    jumpStrength: 15, 
+    gravityFactor: 0.17,
+    // URLs Defaults
+    urlPlayerRight: 'https://raw.githubusercontent.com/ErSieCode/1Rad/main/waschbaer_einrad.png',
+    urlPlayerLeft: 'https://raw.githubusercontent.com/ErSieCode/ersiecode.github.io/refs/heads/main/images/Waschbaer_einrad_L.webp',
+    // ACHTUNG: Großes S bei Sieg.png
+    urlWin: 'https://raw.githubusercontent.com/Jamancode/Python3/master/Schmierheft/Spiele/Roboter_zombie/Grafiken/Sieg.png',
+    urlEnemyRight: '',
+    urlEnemyLeft: '',
+    urlBg: '',
+    urlLose: ''
+};
+const CONFIG = { ...DEFAULT_CONFIG, isPaused: false };
+
+function loadSettings() {
+    try {
+        const saved = localStorage.getItem('zombieGameConfig_v6'); // Neuer Key um Fix zu erzwingen
+        if (saved) Object.assign(CONFIG, JSON.parse(saved));
+    } catch (e) {}
+}
+function saveSettings() {
+    try {
+        const toSave = { ...CONFIG }; delete toSave.isPaused;
+        localStorage.setItem('zombieGameConfig_v6', JSON.stringify(toSave));
+    } catch (e) {}
+}
+loadSettings();
+
+const CANVAS = document.getElementById('canvas');
+const CTX = CANVAS.getContext('2d');
+const UI = document.getElementById('ui-layer');
+const MSG = document.getElementById('status-msg');
+const BTN_START = document.getElementById('start-btn');
+const BTN_SETTINGS = document.getElementById('settings-btn');
+const MODAL = document.getElementById('settings-modal');
+
+function resizeCanvas() {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const aspectRatio = 1200 / 595;
+    if (vw / vh > aspectRatio) {
+        CANVAS.style.height = vh + 'px'; CANVAS.style.width = (vh * aspectRatio) + 'px';
+    } else {
+        CANVAS.style.width = vw + 'px'; CANVAS.style.height = (vw / aspectRatio) + 'px';
+    }
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 200));
+
+// --- ASSET SYSTEM ---
+const REPO_URL = "https://raw.githubusercontent.com/Jamancode/Python3/master/Schmierheft/Spiele/Roboter_zombie/";
+const ASSET_MANIFEST = {
+    images: [
+        { key: 'hintergrund', path: 'Grafiken/hintergrund.png' },
+        { key: 'angriffLinks', path: 'Grafiken/angriffLinks.png' },
+        { key: 'angriffRechts', path: 'Grafiken/angriffRechts.png' },
+        { key: 'sprung', path: 'Grafiken/sprung.png' },
+        { key: 'siegBild', path: 'Grafiken/Sieg.png' }, // Hier auch Pfad gefixt!
+        { key: 'verlorenBild', path: 'Grafiken/verloren.png' },
+        { key: 'ganz', path: 'Grafiken/voll.png' },
+        { key: 'halb', path: 'Grafiken/halb.png' },
+        { key: 'leer', path: 'Grafiken/leer.png' }
+    ],
+    sounds: [
+        { key: 'sprung', path: 'Sounds/sprung.wav' },
+        { key: 'sieg', path: 'Sounds/robosieg.wav' },
+        { key: 'verloren', path: 'Sounds/robotod.wav' }
+    ]
+};
+
+for (let i = 1; i <= 8; i++) {
+    ASSET_MANIFEST.images.push({ key: `p_rechts_${i}`, path: `Grafiken/rechts${i}.png` });
+    ASSET_MANIFEST.images.push({ key: `p_links_${i}`, path: `Grafiken/links${i}.png` });
+    ASSET_MANIFEST.images.push({ key: `z_links_${i}`, path: `Grafiken/l${i}.png` });
+    ASSET_MANIFEST.images.push({ key: `z_rechts_${i}`, path: `Grafiken/r${i}.png` });
+}
+
+// Hier speichern wir die Standard-Assets
+const assets = { img: {}, snd: {} };
+// Hier speichern wir die geladenen Custom-Bilder
+const customImages = {
+    playerRight: null,
+    playerLeft: null,
+    enemyRight: null,
+    enemyLeft: null,
+    bg: null,
+    win: null,
+    lose: null
+};
+
+let assetsLoaded = 0;
+const totalAssets = ASSET_MANIFEST.images.length + ASSET_MANIFEST.sounds.length;
+
+function createFallbackImage(key, w, h, color, text) {
+    const cvs = document.createElement('canvas');
+    cvs.width = w; cvs.height = h;
+    const ctx = cvs.getContext('2d');
+    ctx.fillStyle = color;
+    ctx.fillRect(0,0,w,h);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(0,0,w,h);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, w/2, h/2);
+    return cvs;
+}
+
+function loadAssets() {
+    const progressEl = document.getElementById('progress');
+    function checkLoad() {
+        assetsLoaded++;
+        const percent = Math.round((assetsLoaded / totalAssets) * 100);
+        progressEl.innerText = percent + '%';
+        if (assetsLoaded >= totalAssets) {
+            MSG.innerText = "Bereit!";
+            BTN_START.classList.remove('hidden');
+            document.getElementById('controls').style.display = 'flex';
+        }
+    }
+
+    ASSET_MANIFEST.images.forEach(item => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.src = REPO_URL + item.path;
+        img.onload = () => { assets.img[item.key] = img; checkLoad(); };
+        img.onerror = () => {
+            let color = '#555'; let w = 96, h = 128; let text = "IMG";
+            if (item.key.includes('hintergrund')) { w = 1200; h = 595; color = '#222'; text = "BG"; }
+            else if (item.key.includes('sieg')) { w = 1200; h = 595; color = '#2e7d32'; text = "WIN"; }
+            else if (item.key.includes('verloren')) { w = 1200; h = 595; color = '#c62828'; text = "LOSE"; }
+            else if (item.key.includes('p_')) { color = '#1565C0'; text = "Hero"; }
+            else if (item.key.includes('z_')) { color = '#43A047'; text = "Enemy"; }
+            else if (item.key === 'ganz' || item.key === 'halb' || item.key === 'leer') { w=40; h=40; color='red'; text="♥"; }
+            assets.img[item.key] = createFallbackImage(item.key, w, h, color, text);
+            checkLoad();
+        };
+    });
+
+    ASSET_MANIFEST.sounds.forEach(item => {
+        const aud = new Audio();
+        aud.src = REPO_URL + item.path;
+        aud.preload = 'auto';
+        aud.volume = 0.5;
+        aud.oncanplaythrough = () => { assets.snd[item.key] = aud; checkLoad(); };
+        aud.onerror = () => { checkLoad(); };
+        setTimeout(() => { if(assetsLoaded < totalAssets) checkLoad(); }, 2000);
+    });
+}
+
+function playSound(key) {
+    if (assets.snd[key]) {
+        try { const clone = assets.snd[key].cloneNode(); clone.volume = 0.5; clone.play().catch(() => {}); } catch(e){}
+    }
+}
+
+// --- SPIEL LOGIK ---
+let go = false;
+let gewonnen = false;
+let verloren = false;
+let kugeln = [];
+let isReturningToMenu = false;
+const GROUND_Y = 393;
+
+class Spieler {
+    constructor(x, y) {
+        this.x = x; this.y = y; this.vy = 0; 
+        this.breite = 96; this.hoehe = 128;
+        this.richtg = [0, 0, 1, 0];
+        this.schritteRechts = 0; this.schritteLinks = 0;
+        this.onGround = true; 
+        this.last = [1, 0];
+        this.ok = true;
+    }
+    get geschw() { return CONFIG.playerSpeed; }
+    laufen(liste) {
+        if (liste[0]) { this.x -= this.geschw; this.richtg = [1, 0, 0, 0]; this.schritteLinks++; }
+        if (liste[1]) { this.x += this.geschw; this.richtg = [0, 1, 0, 0]; this.schritteRechts++; }
+    }
+    stehen() { 
+        if(this.onGround) this.richtg = [0, 0, 1, 0]; 
+        this.schritteLinks = 0; this.schritteRechts = 0; 
+    }
+    sprungSetzen() {
+        if (this.onGround) { this.vy = -(CONFIG.jumpStrength * 1.2); this.onGround = false; playSound('sprung'); }
+    }
+    springen() {
+        this.vy += (CONFIG.gravityFactor * 4.0); this.y += this.vy;
+        if (this.y >= GROUND_Y) { this.y = GROUND_Y; this.vy = 0; this.onGround = true; } 
+        else { this.onGround = false; this.richtg = [0, 0, 0, 1]; }
+    }
+    spZeichnen() {
+        if (this.schritteRechts === 63) this.schritteRechts = 0;
+        if (this.schritteLinks === 63) this.schritteLinks = 0;
+        
+        const isRight = this.richtg[1] || (!this.richtg[0] && this.last[1]);
+        const isLeft = this.richtg[0] || (!this.richtg[1] && this.last[0]);
+        let customImg = null; let flip = false;
+
+        if (isRight && customImages.playerRight) { customImg = customImages.playerRight; flip = false; }
+        else if (isLeft) {
+            if (customImages.playerLeft) { customImg = customImages.playerLeft; flip = false; }
+            else if (customImages.playerRight) { customImg = customImages.playerRight; flip = true; }
+        }
+
+        if (customImg) {
+            CTX.save();
+            if (flip) { CTX.scale(-1, 1); CTX.drawImage(customImg, -(this.x + this.breite), this.y, this.breite, this.hoehe); }
+            else { CTX.drawImage(customImg, this.x, this.y, this.breite, this.hoehe); }
+            CTX.restore();
+        } else {
+            let img = null;
+            if (this.richtg[0]) img = assets.img[`p_links_${Math.floor(this.schritteLinks / 8) + 1}`];
+            else if (this.richtg[1]) img = assets.img[`p_rechts_${Math.floor(this.schritteRechts / 8) + 1}`];
+            else if (this.richtg[2]) img = this.last[0] ? assets.img['angriffLinks'] : assets.img['angriffRechts'];
+            else if (this.richtg[3]) img = assets.img['sprung'];
+            if(!img) img = this.last[0] ? assets.img['angriffLinks'] : assets.img['angriffRechts'];
+            if (img) CTX.drawImage(img, this.x, this.y);
+        }
+        
+        if(this.richtg[0]) this.last = [1,0]; else if(this.richtg[1]) this.last = [0,1];
+    }
+}
+
+class Kugel {
+    constructor(x, y, richtung) {
+        this.x = x; this.y = y; this.radius = 8; this.geschw = CONFIG.bulletSpeed;
+        if (richtung[0]) { this.x += 5; this.geschw = -CONFIG.bulletSpeed; } else { this.x += 92; }
+        this.y += 84;
+    }
+    bewegen() { this.x += this.geschw; }
+    zeichnen() { CTX.fillStyle = 'black'; CTX.beginPath(); CTX.arc(this.x, this.y, this.radius, 0, Math.PI * 2); CTX.fill(); }
+}
+
+class Zombie {
+    constructor() {
+        this.x = 600; this.y = 393; this.geschw = CONFIG.enemySpeed;
+        this.breite = 96; this.hoehe = 128;
+        this.xMin = 40; this.xMax = 1090; this.leben = 6;
+        this.richtg = [0, 0]; this.schritteRechts = 0; this.schritteLinks = 0;
+    }
+    hinHer() {
+        if (this.x > this.xMax) this.geschw *= -1;
+        else if (this.x < this.xMin) this.geschw *= -1;
+        this.x += this.geschw;
+        if (this.geschw > 0) { this.richtg = [0, 1]; this.schritteRechts++; } 
+        else { this.richtg = [1, 0]; this.schritteLinks++; }
+    }
+    zeichnen() {
+        if (this.schritteRechts === 63) this.schritteRechts = 0;
+        if (this.schritteLinks === 63) this.schritteLinks = 0;
+
+        let customImg = null; let flip = false;
+        if (this.richtg[0]) { // Links laufen
+             if(customImages.enemyLeft) customImg = customImages.enemyLeft;
+             else if(customImages.enemyRight) { customImg = customImages.enemyRight; flip = true; }
+        } else { // Rechts laufen
+             if(customImages.enemyRight) customImg = customImages.enemyRight;
+             else if(customImages.enemyLeft) { customImg = customImages.enemyLeft; flip = true; }
+        }
+
+        if(customImg) {
+            CTX.save();
+            if(flip) { CTX.scale(-1, 1); CTX.drawImage(customImg, -(this.x + this.breite), this.y, this.breite, this.hoehe); }
+            else { CTX.drawImage(customImg, this.x, this.y, this.breite, this.hoehe); }
+            CTX.restore();
+        } else {
+            let img = this.richtg[0] ? assets.img[`z_links_${Math.floor(this.schritteLinks/8)+1}`] : assets.img[`z_rechts_${Math.floor(this.schritteRechts/8)+1}`];
+            if(!img) img = assets.img['z_rechts_1'];
+            if (img) CTX.drawImage(img, this.x, this.y);
+        }
+        
+        const pos = [507, 569, 631];
+        for(let i = 0; i < 3; i++) {
+            let val = this.leben - (i * 2);
+            let hImg = assets.img['leer'];
+            if(val >= 2) hImg = assets.img['ganz'];
+            else if(val === 1) hImg = assets.img['halb'];
+            if(hImg) CTX.drawImage(hImg, pos[i], 15);
+        }
+    }
+}
+
+let spieler1, zombie1;
+const linkeWand = { x: -2, y: 0, w: 2, h: 600 };
+const rechteWand = { x: 1201, y: 0, w: 2, h: 600 };
+
+function initGame() {
+    spieler1 = new Spieler(300, 393);
+    zombie1 = new Zombie();
+    zombie1.geschw = CONFIG.enemySpeed;
+    kugeln = [];
+    go = true; gewonnen = false; verloren = false; isReturningToMenu = false;
+    UI.classList.add('hidden'); BTN_START.style.display = 'block';
+}
+
+function checkCollisionRect(r1, r2) {
+    return (r1.x < r2.x + r2.w && r1.x + r1.w > r2.x && r1.y < r2.y + r2.h && r1.y + r1.h > r2.y);
+}
+
+const keys = { 'ArrowLeft': false, 'ArrowRight': false, 'ArrowUp': false, 'Space': false };
+window.addEventListener('keydown', e => { if(keys.hasOwnProperty(e.code)) keys[e.code] = true; });
+window.addEventListener('keyup', e => { if(keys.hasOwnProperty(e.code)) keys[e.code] = false; });
+function bindTouch(id, keyCode) {
+    const el = document.getElementById(id);
+    el.addEventListener('touchstart', (e) => { e.preventDefault(); keys[keyCode] = true; el.classList.add('pressed'); }, {passive: false});
+    el.addEventListener('touchend', (e) => { e.preventDefault(); keys[keyCode] = false; el.classList.remove('pressed'); }, {passive: false});
+    el.addEventListener('touchcancel', (e) => { keys[keyCode] = false; el.classList.remove('pressed'); });
+}
+bindTouch('btn-left', 'ArrowLeft'); bindTouch('btn-right', 'ArrowRight');
+bindTouch('btn-jump', 'ArrowUp'); bindTouch('btn-shoot', 'Space');
+
+function triggerReturnToMenu() {
+    if (isReturningToMenu) return; isReturningToMenu = true;
+    setTimeout(() => {
+        UI.classList.remove('hidden'); MSG.style.display = 'block';
+        MSG.innerText = gewonnen ? "GEWONNEN! 🏆" : "GAME OVER 💀";
+        BTN_START.style.display = 'block'; BTN_START.innerText = "NOCHMAL SPIELEN";
+    }, 2500);
+}
+
+function gameLoop() {
+    if (CONFIG.isPaused) { requestAnimationFrame(gameLoop); return; }
+
+    if (go) {
+        CTX.clearRect(0,0,1200,595);
+        let bg = customImages.bg ? customImages.bg : assets.img['hintergrund'];
+        if(bg) CTX.drawImage(bg, 0, 0, 1200, 595);
+
+        let sRect = { x: spieler1.x, y: spieler1.y, w: 96, h: 128 };
+        if (keys['ArrowRight'] && !checkCollisionRect(sRect, rechteWand)) spieler1.laufen([0, 1]);
+        else if (keys['ArrowLeft'] && !checkCollisionRect(sRect, linkeWand)) spieler1.laufen([1, 0]);
+        else spieler1.stehen();
+
+        if (keys['ArrowUp']) spieler1.sprungSetzen();
+        spieler1.springen();
+
+        if (keys['Space']) {
+            if (kugeln.length <= 0 && spieler1.ok) { kugeln.push(new Kugel(Math.round(spieler1.x), Math.round(spieler1.y), spieler1.last)); }
+            spieler1.ok = false;
+        } else { spieler1.ok = true; }
+        spieler1.spZeichnen();
+
+        for (let i = kugeln.length - 1; i >= 0; i--) {
+            let k = kugeln[i]; k.bewegen(); k.zeichnen();
+            let zRect = { x: zombie1.x+18, y: zombie1.y+24, w: zombie1.breite-36, h: zombie1.hoehe-24 };
+            if (checkCollisionRect(zRect, { x: k.x-8, y: k.y-8, w: 16, h: 16 })) {
+                zombie1.leben -= 1; kugeln.splice(i, 1);
+                if(zombie1.leben <= 0) { gewonnen = true; go = false; playSound('sieg'); }
+                continue;
+            }
+            if (k.x < 0 || k.x > 1200) kugeln.splice(i, 1);
+        }
+        zombie1.hinHer(); zombie1.zeichnen();
+
+        let zRectFull = { x: zombie1.x+18, y: zombie1.y+24, w: zombie1.breite-36, h: zombie1.hoehe-24 };
+        let sRectFull = { x: spieler1.x+18, y: spieler1.y+36, w: spieler1.breite-36, h: spieler1.hoehe-36 };
+        if (checkCollisionRect(zRectFull, sRectFull)) { verloren = true; go = false; playSound('verloren'); }
+    } else {
+        if(gewonnen) {
+            let winImg = customImages.win ? customImages.win : assets.img['siegBild'];
+            if(winImg) CTX.drawImage(winImg, 0, 0, 1200, 595);
+            triggerReturnToMenu();
+        } else if(verloren) {
+            let loseImg = customImages.lose ? customImages.lose : assets.img['verlorenBild'];
+            if(loseImg) CTX.drawImage(loseImg, 0, 0, 1200, 595);
+            triggerReturnToMenu();
+        } else {
+            UI.classList.remove('hidden'); BTN_START.innerText = "SPIEL STARTEN";
+            BTN_START.style.display = 'block'; MSG.style.display = 'block';
+        }
+        return; 
+    }
+    requestAnimationFrame(gameLoop);
+}
+
+BTN_START.addEventListener('click', () => { const unlockAudio = new Audio(); unlockAudio.play().catch(()=>{}); initGame(); gameLoop(); });
+BTN_SETTINGS.addEventListener('click', () => { CONFIG.isPaused = true; MODAL.classList.add('active'); updateSettingsUI(); });
+document.getElementById('btn-close-settings').addEventListener('click', () => { MODAL.classList.remove('active'); CONFIG.isPaused = false; saveSettings(); });
+document.getElementById('btn-fullscreen').addEventListener('click', () => {
+    if (!document.fullscreenElement) { document.documentElement.requestFullscreen().catch(err => { screen.orientation.lock('landscape').catch(() => {}); }); } else document.exitFullscreen();
+});
+
+function updateSettingsUI() {
+    ['player','enemy','bullet','jump','grav'].forEach(k => {
+        let el = document.getElementById('input-'+k);
+        let keyMap = {'player':'playerSpeed','enemy':'enemySpeed','bullet':'bulletSpeed','jump':'jumpStrength','grav':'gravityFactor'};
+        el.value = CONFIG[keyMap[k]];
+        el.parentNode.querySelector('.val-display').textContent = CONFIG[keyMap[k]];
+    });
+    
+    document.getElementById('url-player-right').value = CONFIG.urlPlayerRight || '';
+    document.getElementById('url-player-left').value = CONFIG.urlPlayerLeft || '';
+    document.getElementById('url-enemy-right').value = CONFIG.urlEnemyRight || '';
+    document.getElementById('url-enemy-left').value = CONFIG.urlEnemyLeft || '';
+    document.getElementById('url-bg').value = CONFIG.urlBg || '';
+    document.getElementById('url-win').value = CONFIG.urlWin || '';
+    document.getElementById('url-lose').value = CONFIG.urlLose || '';
+}
+
+['input-player','input-enemy','input-bullet','input-jump','input-grav'].forEach(id => {
+    document.getElementById(id).addEventListener('input', (e) => {
+        let key = '';
+        if(id === 'input-player') key = 'playerSpeed'; if(id === 'input-enemy') key = 'enemySpeed';
+        if(id === 'input-bullet') key = 'bulletSpeed'; if(id === 'input-jump') key = 'jumpStrength';
+        if(id === 'input-grav') key = 'gravityFactor';
+        CONFIG[key] = parseFloat(e.target.value);
+        e.target.parentNode.querySelector('.val-display').textContent = CONFIG[key];
+    });
+});
+
+function loadAllCustomAssets() {
+    const status = document.getElementById('sprite-status');
+    status.textContent = '⏳ Lade Bilder...'; status.className = 'sprite-status show loading';
+
+    CONFIG.urlPlayerRight = document.getElementById('url-player-right').value.trim();
+    CONFIG.urlPlayerLeft = document.getElementById('url-player-left').value.trim();
+    CONFIG.urlEnemyRight = document.getElementById('url-enemy-right').value.trim();
+    CONFIG.urlEnemyLeft = document.getElementById('url-enemy-left').value.trim();
+    CONFIG.urlBg = document.getElementById('url-bg').value.trim();
+    CONFIG.urlWin = document.getElementById('url-win').value.trim();
+    CONFIG.urlLose = document.getElementById('url-lose').value.trim();
+
+    saveSettings();
+
+    const map = [
+        { key: 'playerRight', url: CONFIG.urlPlayerRight },
+        { key: 'playerLeft', url: CONFIG.urlPlayerLeft },
+        { key: 'enemyRight', url: CONFIG.urlEnemyRight },
+        { key: 'enemyLeft', url: CONFIG.urlEnemyLeft },
+        { key: 'bg', url: CONFIG.urlBg },
+        { key: 'win', url: CONFIG.urlWin },
+        { key: 'lose', url: CONFIG.urlLose }
+    ];
+
+    let pending = 0;
+    map.forEach(item => {
+        if(item.url) {
+            pending++;
+            const img = new Image(); img.crossOrigin = 'anonymous';
+            img.onload = () => { customImages[item.key] = img; pending--; checkDone(); };
+            img.onerror = () => { customImages[item.key] = null; pending--; checkDone(); };
+            img.src = item.url;
+        } else {
+            customImages[item.key] = null;
+        }
+    });
+
+    function checkDone() {
+        if(pending <= 0) {
+            status.textContent = '✅ Fertig geladen!';
+            status.className = 'sprite-status show success';
+            setTimeout(() => status.classList.remove('show'), 2000);
+        }
+    }
+    
+    if(pending === 0) checkDone();
+}
+
+document.getElementById('btn-load-custom').addEventListener('click', loadAllCustomAssets);
+
+document.getElementById('btn-reset-all').addEventListener('click', () => {
+    if(confirm('Alles zurücksetzen?')) {
+        Object.assign(CONFIG, DEFAULT_CONFIG);
+        updateSettingsUI();
+        loadAllCustomAssets();
+        saveSettings();
+    }
+});
+
+loadAllCustomAssets();
+loadAssets();
+
+</script>
+</body>
+</html>
