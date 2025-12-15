@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Flappy Perceptron - Mobile Fix</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #333;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: white;
+            touch-action: none; 
+        }
+
+        canvas#gameCanvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        /* 
+           UI CONTAINER - JETZT RECHTS!
+           Damit der Vogel (links) nicht verdeckt wird.
+        */
+        #ui-sidebar {
+            position: absolute;
+            top: 10px;
+            right: 10px; /* RECHTS statt LINKS */
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            pointer-events: none;
+            width: 150px; /* Schmaler für Mobile */
+        }
+
+        .hud-panel {
+            background: rgba(0, 0, 0, 0.5); /* Mehr Transparenz */
+            padding: 8px;
+            border-radius: 6px;
+            border-right: 3px solid #4ec0ca; /* Rand rechts für Optik */
+            border-left: none;
+            backdrop-filter: blur(2px);
+            pointer-events: auto;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        h3 {
+            margin: 0 0 5px 0;
+            font-size: 11px;
+            text-transform: uppercase;
+            color: #ddd;
+            border-bottom: 1px solid #555;
+            padding-bottom: 2px;
+            text-align: right; /* Text rechtsbündig */
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 2px;
+            font-size: 11px;
+        }
+
+        .val { font-weight: bold; color: #4ec0ca; }
+
+        input[type=range] {
+            width: 100%;
+            cursor: pointer;
+            margin-top: 2px;
+            height: 5px; /* Dünnerer Slider */
+        }
+        
+        /* Canvas zentriert in der Box */
+        #netCanvas {
+            display: block;
+            margin: 0 auto;
+            /* Hintergrund leicht abdunkeln für Kontrast der Linien */
+            background: rgba(0,0,0,0.2);
+            border-radius: 4px;
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.8); 
+            color: white;
+            padding: 20px; 
+            border-radius: 10px;
+            z-index: 999;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="loading">Lade Assets...</div>
+
+    <!-- UI Container (Rechts) -->
+    <div id="ui-sidebar">
+        
+        <!-- 1. Statistik -->
+        <div class="hud-panel">
+            <h3>Statistik</h3>
+            <div class="stat-row"><span>Gen:</span> <span id="genDisp" class="val">1</span></div>
+            <div class="stat-row"><span>Lebend:</span> <span id="aliveDisp" class="val">0</span></div>
+            <div class="stat-row"><span>Score:</span> <span id="scoreDisp" class="val">0</span></div>
+            <div class="stat-row"><span>High:</span> <span id="highDisp" class="val">0</span></div>
+        </div>
+
+        <!-- 2. Speed -->
+        <div class="hud-panel">
+            <h3>Speed</h3>
+            <input type="range" id="speedSlider" min="1" max="100" value="1">
+        </div>
+
+        <!-- 3. Netz -->
+        <div class="hud-panel">
+            <h3>Netz</h3>
+            <!-- Canvas angepasst auf Box-Breite (134px Nutzfläche ca) -->
+            <canvas id="netCanvas" width="134" height="90"></canvas>
+        </div>
+
+    </div>
+
+    <!-- Hauptspiel -->
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+/**
+ * ------------------------------------------------------------------
+ * KONFIGURATION (UNVERÄNDERT)
+ * ------------------------------------------------------------------
+ */
+const POPULATION = 150; 
+const MUTATION_RATE = 0.1; 
+const ELITISM = true; 
+
+// Physik
+const GRAVITY = 0.6;
+const LIFT = -10; 
+const PIPE_SPEED = 4;
+const PIPE_SPAWN_X = 350; 
+const PIPE_GAP = 170; 
+
+// Assets
+const BIRD_SRC = "https://raw.githubusercontent.com/Jamancode/Python3/master/Schmierheft/Spiele/Flappybird_KI/flappyduck2.png";
+const birdImg = new Image();
+
+/**
+ * ------------------------------------------------------------------
+ * BRAIN (UNVERÄNDERT)
+ * ------------------------------------------------------------------
+ */
+function sigmoid(x) {
+    return 1 / (1 + Math.exp(-x));
+}
+
+class Brain {
+    constructor(copyFrom) {
+        if(copyFrom) {
+            this.wIH = JSON.parse(JSON.stringify(copyFrom.wIH));
+            this.wHO = JSON.parse(JSON.stringify(copyFrom.wHO));
+            this.bias = JSON.parse(JSON.stringify(copyFrom.bias));
+        } else {
+            this.wIH = Array(4).fill().map(() => Array(4).fill().map(() => Math.random() * 2 - 1));
+            this.wHO = Array(4).fill().map(() => Array(1).fill().map(() => Math.random() * 2 - 1));
+            this.bias = Array(4).fill().map(() => Math.random() * 2 - 1);
+        }
+    }
+
+    predict(inputs) {
+        let hidden = [];
+        for(let h=0; h<4; h++) {
+            let sum = 0;
+            for(let i=0; i<4; i++) {
+                sum += inputs[i] * this.wIH[i][h];
+            }
+            sum += this.bias[h];
+            hidden[h] = sigmoid(sum);
+        }
+        let output = 0;
+        for(let h=0; h<4; h++) {
+            output += hidden[h] * this.wHO[h][0];
+        }
+        return sigmoid(output);
+    }
+
+    mutate() {
+        const mod = val => {
+            if (Math.random() < MUTATION_RATE) {
+                return val + (Math.random() * 0.5 - 0.25);
+            }
+            return val;
+        };
+        this.wIH = this.wIH.map(row => row.map(mod));
+        this.wHO = this.wHO.map(row => row.map(mod));
+        this.bias = this.bias.map(mod);
+    }
+}
+
+/**
+ * ------------------------------------------------------------------
+ * SPIEL LOGIK (UNVERÄNDERT)
+ * ------------------------------------------------------------------
+ */
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+let cw, ch;
+
+const resize = () => {
+    cw = canvas.width = window.innerWidth;
+    ch = canvas.height = window.innerHeight;
+};
+window.addEventListener('resize', resize);
+resize();
+
+class Bird {
+    constructor(brain) {
+        this.y = ch / 2;
+        this.x = cw * 0.2; // 20% von Links -> Vogel ist links
+        this.velocity = 0;
+        this.alive = true;
+        this.fitness = 0;
+        this.brain = brain ? new Brain(brain) : new Brain();
+        this.lastInputs = [0,0,0,0];
+        this.lastAction = 0;
+    }
+
+    think(pipes) {
+        let closest = null;
+        let minDist = Infinity;
+        for(let p of pipes) {
+            let dist = (p.x + p.w) - this.x;
+            if(dist > -30 && dist < minDist) {
+                minDist = dist;
+                closest = p;
+            }
+        }
+
+        if(closest) {
+            let inputs = [];
+            inputs[0] = this.y / ch; 
+            inputs[1] = (closest.x - this.x) / cw; 
+            inputs[2] = closest.top / ch; 
+            inputs[3] = (closest.top + PIPE_GAP) / ch; 
+
+            this.lastInputs = inputs;
+
+            let action = this.brain.predict(inputs);
+            this.lastAction = action;
+
+            if(action > 0.5) this.jump();
+        }
+    }
+
+    update() {
+        this.velocity += GRAVITY;
+        this.y += this.velocity;
+        this.fitness++;
+        if(this.y > ch - 20 || this.y < 0) this.alive = false;
+    }
+
+    jump() {
+        this.velocity = LIFT;
+    }
+
+    draw() {
+        ctx.drawImage(birdImg, this.x, this.y, 40, 30);
+    }
+}
+
+class Pipe {
+    constructor() {
+        this.x = cw;
+        this.w = 70;
+        this.top = Math.random() * (ch - PIPE_GAP - 100) + 50;
+    }
+    
+    update() {
+        this.x -= PIPE_SPEED;
+    }
+
+    draw() {
+        ctx.fillStyle = '#75c075';
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 2;
+        ctx.fillRect(this.x, 0, this.w, this.top);
+        ctx.strokeRect(this.x, 0, this.w, this.top);
+        let botY = this.top + PIPE_GAP;
+        ctx.fillRect(this.x, botY, this.w, ch - botY);
+        ctx.strokeRect(this.x, botY, this.w, ch - botY);
+    }
+
+    hits(bird) {
+        if(bird.y < this.top || bird.y + 25 > this.top + PIPE_GAP) {
+            if(bird.x + 35 > this.x && bird.x + 5 < this.x + this.w) {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
+/**
+ * ------------------------------------------------------------------
+ * CORE
+ * ------------------------------------------------------------------
+ */
+let birds = [];
+let pipes = [];
+let generation = 1;
+let highScore = 0;
+let currentScore = 0;
+
+function initGame() {
+    birds = [];
+    for(let i=0; i<POPULATION; i++) birds.push(new Bird());
+    pipes = [new Pipe()];
+    currentScore = 0;
+}
+
+function nextGeneration() {
+    let allDead = birds.concat(savedBirds);
+    savedBirds.sort((a,b) => b.fitness - a.fitness);
+
+    if(savedBirds[0].fitness > highScore) highScore = savedBirds[0].fitness;
+
+    let newBirds = [];
+    
+    if(ELITISM) {
+        let champ = new Bird(savedBirds[0].brain);
+        champ.fitness = 0;
+        newBirds.push(champ);
+    }
+
+    while(newBirds.length < POPULATION) {
+        let parent = selectParent(savedBirds);
+        let child = new Bird(parent.brain);
+        child.brain.mutate();
+        newBirds.push(child);
+    }
+
+    birds = newBirds;
+    savedBirds = [];
+    pipes = [new Pipe()];
+    currentScore = 0;
+    generation++;
+}
+
+function selectParent(pool) {
+    let limit = Math.floor(pool.length * 0.1) || 1;
+    let idx = Math.floor(Math.random() * limit);
+    return pool[idx];
+}
+
+
+/**
+ * ------------------------------------------------------------------
+ * UI VISUALISIERUNG (KOMPAKT)
+ * ------------------------------------------------------------------
+ */
+const netCanvas = document.getElementById('netCanvas');
+const netCtx = netCanvas.getContext('2d');
+
+function drawNetwork(bird) {
+    netCtx.clearRect(0,0, netCanvas.width, netCanvas.height);
+    if(!bird) return;
+
+    // Koordinaten für Mini-Canvas (134x90)
+    const startX = 15;
+    const startY = 15;
+    const layerGap = 40; // Eng
+    const nodeGap = 18;  // Eng
+    
+    netCtx.fillStyle = "#aaa";
+    netCtx.font = "8px Arial";
+    netCtx.fillText("IN", startX-5, 8);
+    netCtx.fillText("HID", startX+layerGap-6, 8);
+    netCtx.fillText("OUT", startX+layerGap*2-8, 8);
+
+    const drawNode = (x, y, val) => {
+        netCtx.beginPath();
+        netCtx.arc(x, y, 3, 0, Math.PI*2); // Sehr kleine Nodes
+        netCtx.fillStyle = `rgba(255,255,255,${0.3 + val*0.7})`;
+        netCtx.fill();
+    };
+
+    const drawLine = (x1, y1, x2, y2, weight) => {
+        netCtx.beginPath();
+        netCtx.moveTo(x1, y1);
+        netCtx.lineTo(x2, y2);
+        netCtx.lineWidth = 0.8; // Sehr feine Linien
+        netCtx.strokeStyle = weight > 0 ? "rgba(100,200,255,0.7)" : "rgba(255,100,100,0.7)";
+        netCtx.stroke();
+    };
+
+    // 1. Inputs
+    for(let i=0; i<4; i++) {
+        let x = startX;
+        let y = startY + i*nodeGap;
+        for(let h=0; h<4; h++) {
+            drawLine(x, y, startX + layerGap, startY + h*nodeGap, bird.brain.wIH[i][h]);
+        }
+        drawNode(x, y, bird.lastInputs[i] || 0);
+    }
+
+    // 2. Hidden
+    for(let h=0; h<4; h++) {
+        let x = startX + layerGap;
+        let y = startY + h*nodeGap;
+        for(let o=0; o<1; o++) {
+            drawLine(x, y, startX + layerGap*2, startY + nodeGap*1.5, bird.brain.wHO[h][o]);
+        }
+        drawNode(x, y, 0.5); 
+    }
+
+    // 3. Output
+    let ox = startX + layerGap*2;
+    let oy = startY + nodeGap*1.5;
+    drawNode(ox, oy, bird.lastAction);
+    
+    if(bird.lastAction > 0.5) {
+        netCtx.fillStyle = "#0f0";
+        netCtx.font = "9px Arial";
+        netCtx.fillText("JUMP", ox+8, oy+3);
+    }
+}
+
+/**
+ * ------------------------------------------------------------------
+ * LOOP
+ * ------------------------------------------------------------------
+ */
+let savedBirds = [];
+let bestBird = null;
+
+function loop() {
+    let cycles = parseInt(document.getElementById('speedSlider').value);
+
+    for(let c=0; c<cycles; c++) {
+        
+        let lastPipe = pipes[pipes.length-1];
+        if(cw - lastPipe.x > PIPE_SPAWN_X) {
+            pipes.push(new Pipe());
+        }
+
+        for(let i=pipes.length-1; i>=0; i--) {
+            pipes[i].update();
+            if(pipes[i].x < -100) pipes.splice(i, 1);
+        }
+
+        let tempBest = null;
+        let maxFit = -1;
+        let aliveCount = 0;
+
+        for(let i=birds.length-1; i>=0; i--) {
+            let b = birds[i];
+            
+            b.think(pipes);
+            b.update();
+
+            let hit = false;
+            if(!b.alive) hit = true; 
+            else {
+                for(let p of pipes) {
+                    if(p.hits(b)) {
+                        hit = true;
+                        break;
+                    }
+                }
+            }
+
+            if(hit) {
+                b.alive = false;
+                savedBirds.push(b);
+                birds.splice(i, 1);
+            } else {
+                aliveCount++;
+                if(b.fitness > maxFit) {
+                    maxFit = b.fitness;
+                    tempBest = b;
+                }
+            }
+        }
+        
+        if(tempBest) bestBird = tempBest;
+        currentScore++;
+
+        if(birds.length === 0) {
+            nextGeneration();
+            break;
+        }
+    }
+
+    ctx.clearRect(0,0,cw,ch);
+    ctx.fillStyle = "#70c5ce";
+    ctx.fillRect(0,0,cw,ch);
+
+    for(let p of pipes) p.draw();
+    for(let b of birds) b.draw();
+
+    ctx.fillStyle = "#ded895";
+    ctx.fillRect(0, ch-20, cw, 20);
+
+    // DOM Updates
+    document.getElementById('genDisp').innerText = generation;
+    document.getElementById('aliveDisp').innerText = birds.length;
+    document.getElementById('scoreDisp').innerText = Math.floor(currentScore/10);
+    document.getElementById('highDisp').innerText = Math.floor(highScore/10);
+
+    if(bestBird) {
+        ctx.strokeStyle = "yellow";
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(bestBird.x+20, bestBird.y+15, 30, 0, Math.PI*2); ctx.stroke();
+        drawNetwork(bestBird);
+    }
+
+    requestAnimationFrame(loop);
+}
+
+birdImg.onload = () => {
+    document.getElementById('loading').style.display = 'none';
+    initGame();
+    loop();
+};
+birdImg.src = BIRD_SRC;
+
+</script>
+</body>
+</html>
